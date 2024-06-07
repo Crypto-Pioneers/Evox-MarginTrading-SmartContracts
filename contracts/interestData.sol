@@ -5,7 +5,6 @@ import "./interfaces/IDataHub.sol";
 import "./interfaces/IExecutor.sol";
 import "./interfaces/IUtilityContract.sol";
 import "./libraries/EVO_LIBRARY.sol";
-
 import "hardhat/console.sol";
 
 contract interestData {
@@ -36,6 +35,18 @@ contract interestData {
         admins[address(utils)] = false;
         admins[_utils] = true;
         utils = IUtilityContract(_utils);
+    }
+
+    /// @notice Sets a new Admin role
+    function setAdminRole(address _admin) external {
+        require(msg.sender == owner, " you cannot perform this action");
+        admins[_admin] = true;
+    }
+
+    /// @notice Revokes the Admin role of the contract
+    function revokeAdminRole(address _admin) external {
+        require(msg.sender == owner, " you cannot perform this action");
+        admins[_admin] = false;
     }
 
     function transferOwnership(address _owner) public {
@@ -149,20 +160,12 @@ contract interestData {
                 
                 runningUpIndex = biggestPossibleStartTimeframe + 1;
                 runningDownIndex = biggestPossibleStartTimeframe;
-                // console.log("runningUpIndex", runningUpIndex);
                 break;
             }
         }
         for (uint256 i = 0; i < timeframes.length; i++) {
             while ((runningUpIndex + timeframes[i] - 1) <= endIndex) {
-                // this inverses the list order due to interest being stored in the opposite index format 0-4
                 adjustedIndex = timeframes.length - 1 - i;
-                // console.log("adjusted index", adjustedIndex);
-                // console.log("time scale rate index", fetchTimeScaledRateIndex(
-                //     adjustedIndex,
-                //     token,
-                //     runningUpIndex / timeframes[i] // 168 / 168 = 1
-                // ).interestRate);
                 cumulativeInterestRates +=
                     fetchTimeScaledRateIndex(
                         adjustedIndex,
@@ -170,18 +173,11 @@ contract interestData {
                         runningUpIndex / timeframes[i] // 168 / 168 = 1
                     ).interestRate *
                     timeframes[i];
-                // console.log("cumulativeInterestRates", cumulativeInterestRates);
                 runningUpIndex += timeframes[i];
-                // console.log("runningUpIndex", runningUpIndex);
-                // console.log("counter", counter);
             }
 
-            // Calculate cumulative interest rates for decreasing indexes
             while ((runningDownIndex >= timeframes[i]) && ((runningDownIndex - timeframes[i] + 1) >= startIndex)) {
-                //&& available
                 adjustedIndex = timeframes.length - 1 - i;
-                // console.log("adjustedindex", adjustedIndex);
-
                 cumulativeInterestRates +=
                     fetchTimeScaledRateIndex(
                         adjustedIndex,
@@ -189,24 +185,10 @@ contract interestData {
                         runningDownIndex / timeframes[i]
                     ).interestRate *
                     timeframes[i];
-
-                // console.log("cumulativeInterestRates", cumulativeInterestRates);
-
-                // console.log("counter", counter);
-
                 runningDownIndex -= timeframes[i];
-
-                // console.log("runningDownIndex", runningDownIndex);
             }
         }
-
-        if (
-            cumulativeInterestRates == 0 || (endIndex - (startIndex - 1)) == 0
-        ) {
-            return 0;
-        }
-        // Return the cumulative interest rates
-        return cumulativeInterestRates / (endIndex - (startIndex  - 1));
+        return cumulativeInterestRates / (endIndex - startIndex + 1);
     }
 
     function calculateAverageCumulativeDepositInterest(
@@ -225,9 +207,10 @@ contract interestData {
         uint256 adjustedIndex;
 
         if(startIndex == endIndex) {
-            return 0;
+            return (0);
         }
-        // startIndex = startIndex + 1; // For calculating untouched and cause of gas fee
+
+        startIndex = startIndex + 1; // For calculating untouched and cause of gas fee
         
         for (uint256 i = 0; i < timeframes.length; i++) {
             if ( startIndex + timeframes[i] - 1 <= endIndex) { // For spliting
@@ -242,7 +225,6 @@ contract interestData {
                 break;
             }
         }
-
         for (uint256 i = 0; i < timeframes.length; i++) {
             while ((runningUpIndex + timeframes[i] - 1) <= endIndex) {
                 adjustedIndex = timeframes.length - 1 - i;
@@ -253,7 +235,6 @@ contract interestData {
                         runningUpIndex / timeframes[i] // 168 / 168 = 1
                     ).interestRate *
                     timeframes[i];
-
                 cumulativeBorrowProportion +=
                     fetchTimeScaledRateIndex(
                         adjustedIndex,
@@ -261,7 +242,6 @@ contract interestData {
                         runningUpIndex / timeframes[i] // 168 / 168 = 1
                     ).borrowProportionAtIndex *
                     timeframes[i];
-
                 runningUpIndex += timeframes[i];
             }
 
@@ -276,28 +256,17 @@ contract interestData {
                         runningDownIndex / timeframes[i]
                     ).interestRate *
                     timeframes[i];
-
                 cumulativeBorrowProportion +=
                     fetchTimeScaledRateIndex(
                         adjustedIndex,
                         token,
-                        runningUpIndex / timeframes[i] // 168 / 168 = 1
+                        runningDownIndex / timeframes[i] // 168 / 168 = 1
                     ).borrowProportionAtIndex *
                     timeframes[i];
-
                 runningDownIndex -= timeframes[i];
             }
         }
-
-        if (
-            cumulativeInterestRates == 0 || (endIndex - (startIndex - 1)) == 0
-        ) {
-            return 0;
-        }
-
-        return
-            (cumulativeInterestRates / (endIndex - (startIndex - 1))) *
-            (cumulativeBorrowProportion / (endIndex - (startIndex - 1))) / 10 ** 18;
+        return (cumulativeInterestRates / (endIndex - startIndex + 1)) * (cumulativeBorrowProportion / (endIndex - startIndex + 1)) / 10 ** 18;
     }
 
     /// @notice updates intereest epochs, fills in the struct of data for a new index
@@ -309,9 +278,6 @@ contract interestData {
         uint256 index, // 24
         uint256 value
     ) public checkRoleAuthority {
-        // console.log("=======================Update Interest Index Function========================");
-        // console.log("index", index);
-        // console.log("value", value);
         currentInterestIndex[token] = index + 1; // 25
         uint16[5] memory timeframes = [1, 24, 168, 672, 8736];
         uint256 period_start;
@@ -322,7 +288,6 @@ contract interestData {
         borrowProportion = EVO_LIBRARY.calculateBorrowProportion(
             Datahub.returnAssetLogs(token)
         );
-
         setInterestRateEpoch(
             0,
             token,
@@ -364,7 +329,6 @@ contract interestData {
     }
 
     function setInterestRateEpoch(uint256 dimension, address token, uint256 index, uint256 borrowProportionAtIndex, uint256 interestRate ) internal {
-        // console.log("======================setInterestRateEpoch function=========================");
         InterestRateEpochs[dimension][token][index].interestRate = interestRate;
 
         InterestRateEpochs[dimension][token][index].lastUpdatedTime = block.timestamp;
@@ -376,7 +340,6 @@ contract interestData {
         InterestRateEpochs[dimension][token][index].borrowProportionAtIndex = borrowProportionAtIndex;
 
         InterestRateEpochs[dimension][token][index].rateInfo = InterestRateEpochs[dimension][token][index-1].rateInfo;
-        // console.log("===============================end===============================");
     }
     /// @notice initilizes the interest data for a token
     function initInterest(
@@ -397,22 +360,11 @@ contract interestData {
     /// @param token the token being targetted
 
     function chargeMassinterest(address token) public {
-        // console.log("================charge Massininterest Function=================");
-        // console.log("current token index", fetchCurrentRateIndex(token));
-        // console.log("token address", token);
         uint256 currentRateIndex = fetchCurrentRateIndex(token);
         IInterestData.interestDetails memory rateInfo = fetchRateInfo(token, currentRateIndex);
         uint256 lastUpdatedTime = rateInfo.lastUpdatedTime;
 
         if (lastUpdatedTime + 1 hours <= block.timestamp) {
-            // console.log("current index");
-            // console.log(currentRateIndex);
-            // console.log("assetlogs");
-            // console.log(Datahub.returnAssetLogs(token).totalAssetSupply);
-            // console.log("rate info");
-            // console.log(fetchRateInfo(token, fetchCurrentRateIndex(token)));
-
-            // console.log("calculate interest rate", EVO_LIBRARY.calculateInterestRate(0, Datahub.returnAssetLogs(token), fetchRateInfo(token, fetchCurrentRateIndex(token))));
             IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(token);
             uint256 interestRate = EVO_LIBRARY.calculateInterestRate(
                 0,
@@ -425,17 +377,11 @@ contract interestData {
                 currentRateIndex,
                 interestRate
             );
-
-            // console.log("current index after update",  fetchRateInfo(token, fetchCurrentRateIndex(token)).interestRate);
             uint256 currentInterestRateHourly = interestRate / 8736;
             uint256 calculatedBorroedAmount = ((assetLogs.assetInfo[1]) * (currentInterestRateHourly)) / 10 ** 18; // 1 -> totalBorrowedAmount
-            // console.log("current interestrate hourly", currentInterestRateHourly);
             // total borroed amount * current interest rate -> up total borrowed amount by this fucking value
+            require(calculatedBorroedAmount + assetLogs.assetInfo[1] <= assetLogs.assetInfo[2], "TBA should be smaller than LPS in ChargeMassinInterest");
             Datahub.setAssetInfo(1, token, calculatedBorroedAmount, true); // 1 -> totalBorrowedAmount
-
-            // console.log("borrow add amount", (Datahub.returnAssetLogs(token).totalBorrowedAmount * currentInterestRateHourly) / 10 **  18);
-
-            // console.log("total borrow amount", (Datahub.returnAssetLogs(token).totalBorrowedAmount));
         }
     }
 
@@ -444,8 +390,7 @@ contract interestData {
         address token,
         uint256 liabilitiesAccrued
     ) public view returns (uint256) {
-        // console.log("========================return interest charge function========================");
-        (, uint256 liabilities, , , ) = Datahub.ReadUserData(user, token);
+        (, uint256 liabilities, , , ,) = Datahub.ReadUserData(user, token);
 
         uint256 interestRateIndex = Datahub.viewUsersInterestRateIndex(user, token);
         uint256 currentRateIndex = fetchCurrentRateIndex(token);
@@ -456,18 +401,6 @@ contract interestData {
             currentRateIndex,
             token
         );
-
-        // console.log("liabilities", liabilities);
-        // console.log("fetchcurrentreateIndex", fetchCurrentRateIndex(token));
-        // console.log("userearningrateIndex", Datahub.viewUsersInterestRateIndex(user, token));
-        // console.log("calculate avareage cumulative interest", calculateAverageCumulativeInterest(
-        //     Datahub.viewUsersInterestRateIndex(user, token),
-        //     fetchCurrentRateIndex(token),
-        //     token
-        // ));
-        // console.log("liabilitiesAccrued", liabilitiesAccrued);
-        // console.log("viewUsersInterestRateIndex", Datahub.viewUsersInterestRateIndex(user, token));
-
         uint256 interestCharge = EVO_LIBRARY.calculateCompoundedLiabilities(
             currentRateIndex,
             cumulativeInterest,
@@ -477,7 +410,6 @@ contract interestData {
             liabilities,
             interestRateIndex
         );
-        // console.log("interest charge", interestCharge);
         return interestCharge;
     }
 
@@ -490,5 +422,3 @@ contract interestData {
 
     receive() external payable {}
 }
-/*
-*/

@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol" as ERC20;
 import "@openzeppelin/contracts/interfaces/IERC20.sol" as IERC20;
 import "./libraries/EVO_LIBRARY.sol";
 import "./interfaces/IExecutor.sol";
-import "./interfaces/IinterestData.sol";
+import "./interfaces/IInterestData.sol";
 import "./interfaces/IUtilityContract.sol";
 import "hardhat/console.sol";
 
@@ -20,12 +20,14 @@ contract DepositVault is Ownable {
         address dataHub,
         address executor,
         address interest,
-        address _utility
+        address _utility,
+        address _usdt
     ) Ownable(initialOwner) {
         Datahub = IDataHub(dataHub);
         Executor = IExecutor(executor);
         interestContract = IInterestData(interest);
         utility = IUtilityContract(_utility);
+        USDT = address(_usdt);
     }
 
     modifier checkRoleAuthority() {
@@ -80,6 +82,16 @@ contract DepositVault is Ownable {
     bool circuitBreakerStatus = false;
 
     uint256 public lastUpdateTime;
+
+    /// @notice Sets a new Admin role
+    function setAdminRole(address _admin) external onlyOwner {
+        admins[_admin] = true;
+    }
+
+    /// @notice Revokes the Admin role of the contract
+    function revokeAdminRole(address _admin) external onlyOwner {
+        admins[_admin] = false;
+    }
 
     function toggleCircuitBreaker(bool onOff) public onlyOwner {
         circuitBreakerStatus = onOff;
@@ -147,7 +159,7 @@ contract DepositVault is Ownable {
     ) private {
         address[] memory tokens = Datahub.returnUsersAssetTokens(user);
         uint256 liabilityMultiplier;
-        (, uint256 liabilities, , , ) = Datahub.ReadUserData(
+        (, uint256 liabilities, , , ,) = Datahub.ReadUserData(
             msg.sender,
             in_token
         );
@@ -169,7 +181,7 @@ contract DepositVault is Ownable {
     ) private {
         address[] memory tokens = Datahub.returnUsersAssetTokens(user);
         uint256 liabilityMultiplier;
-        (, uint256 liabilities, , , ) = Datahub.ReadUserData(
+        (, uint256 liabilities, , , ,) = Datahub.ReadUserData(
             msg.sender,
             in_token
         );
@@ -194,6 +206,10 @@ contract DepositVault is Ownable {
             Datahub.returnAssetLogs(token).initialized == true,
             "this asset is not available to be deposited or traded"
         );
+
+        uint256 decimals = fetchDecimals(token);
+        amount = amount * (10 ** decimals) / (10 ** 18);
+
         //chechking balance for contract before the token transfer 
         uint256 contractBalanceBefore = IERC20.IERC20(token).balanceOf(address(this));
         // transfering the tokens to contract
@@ -202,13 +218,14 @@ contract DepositVault is Ownable {
         uint256 contractBalanceAfter = IERC20.IERC20(token).balanceOf(address(this));
         // exactAmountTransfered is the exact value being transfer in contract
         uint256 exactAmountTransfered = contractBalanceAfter - contractBalanceBefore;
+        exactAmountTransfered = exactAmountTransfered * (10 ** 18) / (10 ** decimals);
         // console.log("exactAmountTransfered", exactAmountTransfered);
     
 
-        require(!circuitBreakerStatus);
+        require(!circuitBreakerStatus, "circuit breaker active");
         Datahub.setAssetInfo(0, token, exactAmountTransfered, true); // 0 -> totalSupply
 
-        (uint256 assets, uint256 liabilities, , , ) = Datahub.ReadUserData(msg.sender, token);
+        (uint256 assets, uint256 liabilities, , , ,) = Datahub.ReadUserData(msg.sender, token);
 
         if(liabilities > 0) {
             uint256 interestCharge = interestContract.returnInterestCharge(
@@ -216,6 +233,7 @@ contract DepositVault is Ownable {
                 token,
                 0
             );
+            // console.log("interest charge in deposit function", interestCharge);
     
             Datahub.addLiabilities(msg.sender, token, interestCharge);
             liabilities = liabilities + interestCharge;
@@ -234,7 +252,7 @@ contract DepositVault is Ownable {
         // checks to see if user is in the sytem and inits their struct if not
         if (liabilities > 0) {
             // checks to see if the user has liabilities of that asset
-
+            
             if (exactAmountTransfered <= liabilities) {
                 // if the exactAmountTransfered is less or equal to their current liabilities -> lower their liabilities using the multiplier
 
@@ -259,13 +277,14 @@ contract DepositVault is Ownable {
 
                 return true;
             } else {
-                modifyMMROnDeposit(msg.sender, token, exactAmountTransfered);
+                modifyMMROnDeposit(msg.sender, token, liabilities);
 
-                modifyIMROnDeposit(msg.sender, token, exactAmountTransfered);
+                modifyIMROnDeposit(msg.sender, token, liabilities);
                 // if exactAmountTransfered depositted is bigger that liability info 0 it out
                 // uint256 exactAmountTransferedAddedtoAssets = exactAmountTransfered - liabilities; // exactAmountTransfered - outstanding liabilities
 
                 // Datahub.addAssets(msg.sender, token, exactAmountTransferedAddedtoAssets); // add to assets
+                // console.log("transfer amount", exactAmountTransfered - liabilities);
 
                 Datahub.addAssets(msg.sender, token, exactAmountTransfered - liabilities); // add to assets
 
@@ -306,7 +325,7 @@ contract DepositVault is Ownable {
 
         utility.debitAssetInterest(msg.sender, token);
 
-        (uint256 assets, , uint256 pending, , ) = Datahub.ReadUserData(
+        (uint256 assets, , uint256 pending, , ,) = Datahub.ReadUserData(
             msg.sender,
             token
         );
@@ -375,6 +394,8 @@ contract DepositVault is Ownable {
         }
 
         IERC20.IERC20 ERC20Token = IERC20.IERC20(token);
+        uint256 decimals = fetchDecimals(token);
+        uint256 exactAmountToWithdraw = amount * (10 ** decimals) / (10 ** 18);
         ERC20Token.transfer(msg.sender, amount);
 
         Datahub.setAssetInfo(0, token, amount, false); // 0 -> totalSupply
@@ -382,7 +403,7 @@ contract DepositVault is Ownable {
         // IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(token);
 
         // 1 -> totalBorrowedAmount
-        if (assetLogs.assetInfo[1] > 0) {
+        if (assetLogs.assetInfo[1] != 0) {
             interestContract.chargeMassinterest(token);
         }
     }
@@ -402,14 +423,19 @@ contract DepositVault is Ownable {
         //chechking balance for contract before the token transfer 
         uint256 contractBalanceBefore = ERC20Token.balanceOf(address(this));
         // transfering the tokens to contract
+        uint256 decimals = fetchDecimals(token);
+        amount = amount * (10 ** decimals) / (10 ** 18);
         require(ERC20Token.transferFrom(msg.sender, address(this), amount), "Transfer failed");
-        Datahub.setAssetInfo(0, token, amount, true); // 0 -> totalAssetSupply
+        
         //checking the balance for the contract after the token transfer 
         uint256 contractBalanceAfter = ERC20Token.balanceOf(address(this));
-        // exactAmountTransfered is the exact value being transfer in contract
+        // exactAmountTransfered is the exact amount being transferred in contract
         uint256 exactAmountTransfered = contractBalanceAfter - contractBalanceBefore;
+        exactAmountTransfered = exactAmountTransfered * (10 ** 18) / (10 ** decimals);
 
-        (uint256 assets, uint256 liabilities, , , ) = Datahub.ReadUserData(beneficiary, token);
+        Datahub.setAssetInfo(0, token, exactAmountTransfered, true); // 0 -> totalAssetSupply
+
+        (uint256 assets, uint256 liabilities, , , ,) = Datahub.ReadUserData(beneficiary, token);
 
         if(liabilities > 0) {
             uint256 interestCharge = interestContract.returnInterestCharge(
@@ -467,6 +493,12 @@ contract DepositVault is Ownable {
 
             return true;
         }
+    }
+
+    function withdrawETH(address payable owner) external onlyOwner {
+        uint contractBalance = address(this).balance;
+        require(contractBalance > 0, "No balance to withdraw");
+        payable(owner).transfer(contractBalance);
     }
     receive() external payable {}
 }
