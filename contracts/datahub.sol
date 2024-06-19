@@ -209,7 +209,7 @@ contract DataHub is Ownable {
     }
 
     function tradeFee(address token, uint256 feeType) public view returns (uint256) {
-        return 1e18 - (assetdata[token].tradeFees[feeType]);
+        return assetdata[token].tradeFees[feeType];
     }
 
     /// @notice calculates the total dollar value of the users Collateral
@@ -358,6 +358,7 @@ contract DataHub is Ownable {
     /// @param token the token being targetted
     function alterLendingPool(address token, uint256 amount, bool direction) public {
         address _sender = msg.sender;
+
         if(direction) { // deposit
             // lending pool supply
             require(amount + assetdata[token].assetInfo[2] <= assetdata[token].assetInfo[0], "this amount cannot be deposited into the lending pool cause of overflow"); // 0 -> totalSupply
