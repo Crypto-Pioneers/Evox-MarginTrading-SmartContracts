@@ -27,13 +27,10 @@ contract DepositVault is Ownable {
         Executor = IExecutor(executor);
         interestContract = IInterestData(interest);
         utility = IUtilityContract(_utility);
+        admins[address(this)]= true; 
         USDT = address(_usdt);
     }
 
-    modifier checkRoleAuthority() {
-        require(admins[msg.sender] == true, "Unauthorized");
-        _;
-    }
     mapping(address => bool) public admins;
 
     function alterAdminRoles(
@@ -65,7 +62,13 @@ contract DepositVault is Ownable {
     IInterestData public interestContract;
     IUtilityContract public utility;
 
-    using EVO_LIBRARY for uint256;
+    /// @notice checks the role authority of the caller to see if they can change the state
+    modifier checkRoleAuthority() {
+        require(admins[msg.sender] == true, "Unauthorized");
+        _;
+    }
+
+    // using EVO_LIBRARY for uint256;
 
     uint256 public WithdrawThresholdValue = 1000000 * 10 ** 18;
 
@@ -148,50 +151,6 @@ contract DepositVault is Ownable {
         return totalValue;
     }
 
-    /// @notice This function modifies the mmr of the user on deposit
-    /// @param user the user being targetted
-    /// @param in_token the token coming into their wallet
-    /// @param amount the amount being transfered into their wallet
-    function modifyMMROnDeposit(
-        address user,
-        address in_token,
-        uint256 amount
-    ) private {
-        address[] memory tokens = Datahub.returnUsersAssetTokens(user);
-        uint256 liabilityMultiplier;
-        (, uint256 liabilities, , , ,) = Datahub.ReadUserData(
-            msg.sender,
-            in_token
-        );
-        for (uint256 i = 0; i < tokens.length; i++) {
-            liabilityMultiplier = EVO_LIBRARY
-                .calculatedepositLiabilityRatio(liabilities, amount);
-            Datahub.alterMMR(user, in_token, tokens[i], liabilityMultiplier);
-        }
-    }
-
-    /// @notice This function modifies the mmr of the user on deposit
-    /// @param user the user being targetted
-    /// @param in_token the token coming into their wallet
-    /// @param amount the amount being transfered into their wallet
-    function modifyIMROnDeposit(
-        address user,
-        address in_token,
-        uint256 amount
-    ) private {
-        address[] memory tokens = Datahub.returnUsersAssetTokens(user);
-        uint256 liabilityMultiplier;
-        (, uint256 liabilities, , , ,) = Datahub.ReadUserData(
-            msg.sender,
-            in_token
-        );
-        for (uint256 i = 0; i < tokens.length; i++) {
-            liabilityMultiplier = EVO_LIBRARY
-                .calculatedepositLiabilityRatio(liabilities, amount);
-            Datahub.alterIMR(user, in_token, tokens[i], liabilityMultiplier);
-        }
-    }
-
     /* DEPOSIT FUNCTION */
     /// @notice This deposits tokens and inits the user struct, and asset struct if new assets.
     /// @dev Explain to a developer any extra details
@@ -202,100 +161,90 @@ contract DepositVault is Ownable {
         address token,
         uint256 amount
     ) external returns (bool) {
-        require(
-            Datahub.returnAssetLogs(token).initialized == true,
-            "this asset is not available to be deposited or traded"
-        );
+        uint256 amount = deposit_token_transfer(msg.sender, token, amount);
+        return deposit_token_process(msg.sender, token, amount);
+    }
 
+    function deposit_token_process(
+        address user,
+        address token,
+        uint256 amount
+    ) internal returns (bool) {
+        require(Datahub.returnAssetLogs(token).initialized == true, "this asset is not available to be deposited or traded");
+        require(!circuitBreakerStatus, "circuit breaker active");
+        Datahub.setAssetInfo(0, token, amount, true); // 0 -> totalSupply
+
+        interestContract.chargeMassinterest(token);
+
+        (uint256 assets, uint256 liabilities, , , ,) = Datahub.ReadUserData(user, token);
+
+        if(assets > 0) {
+            uint256 earningRate = utility.returnEarningProfit(user, token);
+            Datahub.addAssets(user, token, earningRate);
+            // Datahub.setAssetInfo(0, token, earningRate, true);
+            Datahub.alterUsersEarningRateIndex(user, token);
+        }
+
+        // checks to see if user is in the sytem and inits their struct if not
+        if (liabilities > 0) {
+            uint256 interestCharge = interestContract.returnInterestCharge(user, token, 0);
+            
+            if (amount <= liabilities + interestCharge) {
+                Executor.chargeinterest(user, token, amount, true);
+                
+                return true;
+            } else {
+                Datahub.addAssets(user, token, amount - liabilities - interestCharge); // add to assets
+
+                Datahub.removeLiabilities(user, token, liabilities); // remove all liabilities
+
+                Datahub.setAssetInfo(1, token, liabilities, false); // 1 -> totalBorrowedAmount
+
+                Datahub.changeMarginStatus(user);
+
+                Datahub.alterUsersInterestRateIndex(user, token);
+                return true;
+            }
+        } else {
+            address[] memory users = new address[](1);
+            users[0] = user;
+
+            Datahub.checkIfAssetIsPresent(users, token);
+            Datahub.addAssets(user, token, amount);
+
+            Datahub.alterUsersInterestRateIndex(user, token);
+
+            return true;
+        }
+    }
+
+    function deposit_process(
+        address user,
+        address token,
+        uint256 amount
+    ) public checkRoleAuthority returns (bool) {
+        deposit_token_process(user, token, amount);
+    }
+
+
+    function deposit_token_transfer(
+        address user,
+        address token,
+        uint256 amount
+    ) internal returns (uint256) {
         uint256 decimals = fetchDecimals(token);
         amount = amount * (10 ** decimals) / (10 ** 18);
 
         //chechking balance for contract before the token transfer 
         uint256 contractBalanceBefore = IERC20.IERC20(token).balanceOf(address(this));
         // transfering the tokens to contract
-        require(IERC20.IERC20(token).transferFrom(msg.sender, address(this), amount));
+        require(IERC20.IERC20(token).transferFrom(user, address(this), amount));
         //checking the balance for the contract after the token transfer 
         uint256 contractBalanceAfter = IERC20.IERC20(token).balanceOf(address(this));
         // exactAmountTransfered is the exact value being transfer in contract
         uint256 exactAmountTransfered = contractBalanceAfter - contractBalanceBefore;
         exactAmountTransfered = exactAmountTransfered * (10 ** 18) / (10 ** decimals);
-        // console.log("exactAmountTransfered", exactAmountTransfered);
-    
-
-        require(!circuitBreakerStatus, "circuit breaker active");
-        Datahub.setAssetInfo(0, token, exactAmountTransfered, true); // 0 -> totalSupply
-
-        (uint256 assets, uint256 liabilities, , , ,) = Datahub.ReadUserData(msg.sender, token);
-
-        if(liabilities > 0) {
-            uint256 interestCharge = interestContract.returnInterestCharge(
-                msg.sender,
-                token,
-                0
-            );
-            // console.log("interest charge in deposit function", interestCharge);
-    
-            Datahub.addLiabilities(msg.sender, token, interestCharge);
-            liabilities = liabilities + interestCharge;
-        }
-        
-        // checks to see if user is in the sytem and inits their struct if not
-        if (liabilities > 0) {
-            // checks to see if the user has liabilities of that asset
-            
-            if (exactAmountTransfered <= liabilities) {
-                // if the exactAmountTransfered is less or equal to their current liabilities -> lower their liabilities using the multiplier
-
-                modifyMMROnDeposit(msg.sender, token, exactAmountTransfered);
-
-                modifyIMROnDeposit(msg.sender, token, exactAmountTransfered);
-
-                // Datahub.alterLiabilities(msg.sender, token, ((10 ** 18) -  EVO_LIBRARY.calculatedepositLiabilityRatio(liabilities, exactAmountTransfered))
-                // );
-
-                // Datahub.setTotalBorrowedexactAmountTransfered(token, exactAmountTransfered, false);
-
-                // interestContract.chargeMassinterest(token);
-                // liabilities -= exactAmountTransfered;
-                // updating liability mapping for user 
-
-                Datahub.removeLiabilities(msg.sender, token , exactAmountTransfered);
-
-                Datahub.setAssetInfo(1, token, exactAmountTransfered, false); // 1 -> totalBorrowedexactAmountTransfered
-
-                interestContract.chargeMassinterest(token);
-
-                return true;
-            } else {
-                modifyMMROnDeposit(msg.sender, token, liabilities);
-
-                modifyIMROnDeposit(msg.sender, token, liabilities);
-                // if exactAmountTransfered depositted is bigger that liability info 0 it out
-                // uint256 exactAmountTransferedAddedtoAssets = exactAmountTransfered - liabilities; // exactAmountTransfered - outstanding liabilities
-
-                // Datahub.addAssets(msg.sender, token, exactAmountTransferedAddedtoAssets); // add to assets
-                // console.log("transfer amount", exactAmountTransfered - liabilities);
-
-                Datahub.addAssets(msg.sender, token, exactAmountTransfered - liabilities); // add to assets
-
-                Datahub.removeLiabilities(msg.sender, token, liabilities); // remove all liabilities
-
-                Datahub.setAssetInfo(1, token, liabilities, false); // 1 -> totalBorrowedexactAmountTransfered
-
-                Datahub.changeMarginStatus(msg.sender);
-                interestContract.chargeMassinterest(token);
-
-                return true;
-            }
-        } else {
-            address[] memory users = new address[](1);
-            users[0] = msg.sender;
-
-            Datahub.checkIfAssetIsPresent(users, token);
-            Datahub.addAssets(msg.sender, token, exactAmountTransfered);
-
-            return true;
-        }
+        return exactAmountTransfered;
     }
 
     /* WITHDRAW FUNCTION */
@@ -307,93 +256,56 @@ contract DepositVault is Ownable {
 
     // IMPORTANT MAKE SURE USERS CAN'T WITHDRAW PAST THE LIMIT SET FOR AMOUNT OF FUNDS BORROWED
     function withdraw_token(address token, uint256 amount) external {
+        withdraw_token_process(msg.sender, token, amount);
+        withdraw_token_transfer(msg.sender, token, amount);
+    }
+
+    function withdraw_process(
+        address user,
+        address token,
+        uint256 amount
+    ) public checkRoleAuthority returns (bool) {
+        withdraw_token_process(user, token, amount);
+    }
+
+    function withdraw_token_process(address user, address token, uint256 amount) internal {
         require(!circuitBreakerStatus);
-        require(
-            Datahub.returnAssetLogs(token).initialized == true,
-            "this asset is not available to be deposited or traded"
-        );
+        require(Datahub.returnAssetLogs(token).initialized == true, "this asset is not available to be deposited or traded");
+        
+        interestContract.chargeMassinterest(token);
+        
+        (uint256 assets, uint256 liabilities, uint256 pending, , ,) = Datahub.ReadUserData(user, token);
+        
+        uint256 earningRate = utility.returnEarningProfit(user, token);
+        Datahub.addAssets(user, token, earningRate);
+        // Datahub.setAssetInfo(0, token, earningRate, true);
+        
+        require(pending == 0, "You must have a 0 pending trade balance to withdraw, please wait for your trade to settle before attempting to withdraw");
+        require(amount <= assets + earningRate, "You cannot withdraw more than your asset balance");
 
-        (uint256 assets, , uint256 pending, , ,) = Datahub.ReadUserData(
-            msg.sender,
-            token
-        );
+        Datahub.removeAssets(user, token, amount);
+        Datahub.setAssetInfo(0, token, amount, false); // 0 -> totalSupply
+        Datahub.alterUsersEarningRateIndex(user, token);
 
-        require(
-            pending == 0,
-            "You must have a 0 pending trade balance to withdraw, please wait for your trade to settle before attempting to withdraw"
-        );
-        require(
-            amount <= assets,
-            "You cannot withdraw more than your asset balance"
-        );
-
-        IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(token);
-
-        // 0 -> totalAssetSupply, 1 -> totalBorrowedAmount
-        require(amount + assetLogs.assetInfo[1] < assetLogs.assetInfo[0], "You cannot withdraw this amount as it would exceed the maximum borrow proportion");
-        /*
-        This piece of code is having problems its supposed to be basically a piece of code to protect against dangerous withdraws 
-
-        if (getTotalAssetSupplyValue(token) > WithdrawThresholdValue) {
-            if (
-                amount + token_withdraws_hour[token] >
-                (
-                    interestContract
-                        .fetchRateInfo(
-                            token,
-                            interestContract.fetchCurrentRateIndex(token)
-                        )
-                        .totalAssetSuplyAtIndex
-                ) *
-                    3e17
-            ) {
-                revert DangerousWithdraw();
-            }
+        if (liabilities > 0) {
+            uint256 interestCharge = interestContract.returnInterestCharge(user, token, 0);
+            Datahub.addLiabilities(user, token, interestCharge);
+            Datahub.setAssetInfo(1, token, interestCharge, true); // 0 -> totalSupply
         }
 
-        token_withdraws_hour[token] += amount;
+        Datahub.alterUsersInterestRateIndex(user, token);
 
-        if (lastWithdrawUpdateTime + 3600 >= block.timestamp) {
-            lastWithdrawUpdateTime = block.timestamp;
-            token_withdraws_hour[token] = 0;
-        }
-        */
-        // IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(
-        //     token
-        // );
+        uint256 usersAIMR = Datahub.calculateAIMRForUser(user);
+        uint256 usersTCV = Datahub.calculateCollateralValue(user);
 
-        uint256 AssetPriceCalulation = (assetLogs.assetPrice * amount) / 10 ** 18; // this is 10*18 dnominated price of asset amount
+        require(usersAIMR < usersTCV, "Cannot withdraw");
+    }
 
-        uint256 usersAMMR = Datahub.calculateAMMRForUser(msg.sender);
-
-        uint256 usersTPV = Datahub.calculateTotalPortfolioValue(msg.sender);
-
-        bool UnableToWithdraw = usersAMMR + AssetPriceCalulation > usersTPV;
-        // if the users AMMR + price of the withdraw is bigger than their TPV dont let them withdraw this
-
-        require(!UnableToWithdraw);
-
-        if (amount == assets) {
-            // remove assets and asset token from their portfolio
-            Datahub.removeAssets(msg.sender, token, amount);
-            Datahub.removeAssetToken(msg.sender, token);
-        } else {
-            Datahub.removeAssets(msg.sender, token, amount);
-        }
-
+    function withdraw_token_transfer(address user, address token, uint256 amount) internal {
         IERC20.IERC20 ERC20Token = IERC20.IERC20(token);
         uint256 decimals = fetchDecimals(token);
         uint256 exactAmountToWithdraw = amount * (10 ** decimals) / (10 ** 18);
-        ERC20Token.transfer(msg.sender, amount);
-
-        Datahub.setAssetInfo(0, token, amount, false); // 0 -> totalSupply
-
-        // IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(token);
-
-        // 1 -> totalBorrowedAmount
-        if (assetLogs.assetInfo[1] != 0) {
-            interestContract.chargeMassinterest(token);
-        }
+        ERC20Token.transfer(user, exactAmountToWithdraw);
     }
 
     /* DEPOSIT FOR FUNCTION */
@@ -420,50 +332,46 @@ contract DepositVault is Ownable {
         // exactAmountTransfered is the exact amount being transferred in contract
         uint256 exactAmountTransfered = contractBalanceAfter - contractBalanceBefore;
         exactAmountTransfered = exactAmountTransfered * (10 ** 18) / (10 ** decimals);
-
+        
         Datahub.setAssetInfo(0, token, exactAmountTransfered, true); // 0 -> totalAssetSupply
+        
+        interestContract.chargeMassinterest(token);
 
         (uint256 assets, uint256 liabilities, , , ,) = Datahub.ReadUserData(beneficiary, token);
-
-        if(liabilities > 0) {
+        
+        if (liabilities > 0) {
+            
             uint256 interestCharge = interestContract.returnInterestCharge(
-                msg.sender,
+                beneficiary,
                 token,
                 0
             );
     
-            Datahub.addLiabilities(msg.sender, token, interestCharge);
+            Datahub.addLiabilities(beneficiary, token, interestCharge);
             liabilities = liabilities + interestCharge;
-        }
 
-        if (liabilities > 0) {
             if (exactAmountTransfered <= liabilities) {
-                uint256 liabilityMultiplier = EVO_LIBRARY
-                    .calculatedepositLiabilityRatio(liabilities, exactAmountTransfered);
+                // modifyMMROnDeposit(beneficiary, token, exactAmountTransfered);
 
-                Datahub.alterLiabilities(
-                    beneficiary,
-                    token,
-                    ((10 ** 18) - liabilityMultiplier)
-                );
+                // modifyIMROnDeposit(beneficiary, token, exactAmountTransfered);
 
-                Datahub.setAssetInfo(1, token, exactAmountTransfered, false); // 1 -> totalBorrowedAmount
+                Datahub.removeLiabilities(beneficiary, token , exactAmountTransfered);
 
-                interestContract.chargeMassinterest(token);
+                Datahub.setAssetInfo(1, token, exactAmountTransfered, false); // 1 -> totalBorrowedexactAmountTransferedfalse); // 1 -> totalBorrowedAmount
 
                 return true;
             } else {
-                modifyMMROnDeposit(beneficiary, token, exactAmountTransfered);
-                modifyIMROnDeposit(beneficiary, token, exactAmountTransfered);
-                uint256 amountAddedtoAssets = exactAmountTransfered - liabilities;
+                // modifyMMROnDeposit(beneficiary, token, liabilities);
 
-                Datahub.addAssets(beneficiary, token, amountAddedtoAssets);
-                Datahub.removeLiabilities(beneficiary, token, liabilities);
-                Datahub.setAssetInfo(1, token, liabilities, false); // 1 -> totalBorrowedAmount
+                // modifyIMROnDeposit(beneficiary, token, liabilities);
+
+                Datahub.addAssets(beneficiary, token, exactAmountTransfered - liabilities); // add to assets
+
+                Datahub.removeLiabilities(beneficiary, token, liabilities); // remove all liabilities
+
+                Datahub.setAssetInfo(1, token, liabilities, false); // 1 -> totalBorrowedexactAmountTransfered
 
                 Datahub.changeMarginStatus(beneficiary);
-                interestContract.chargeMassinterest(token);
-
                 return true;
             }
         } else {
@@ -477,8 +385,55 @@ contract DepositVault is Ownable {
         }
     }
 
+    function borrow(address token, uint256 amount) external {
+        IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(token);        
+        require(assetLogs.initialized == true, "this asset is not available to be borrowed");
+       
+        interestContract.chargeMassinterest(token);
+        (uint256 assets, uint256 liabilities, uint256 pending, , ,) = Datahub.ReadUserData(msg.sender, token);
+        require(pending == 0, "You must have a 0 pending trade balance to borrow, please wait for your trade to settle before attempting to borrow");
+        uint256 initalMarginFeeAmount = EVO_LIBRARY.calculateinitialMarginFeeAmount(assetLogs, amount);
+
+        if (liabilities > 0) {    
+            Executor.chargeinterest(msg.sender, token, amount, false);
+        } else {
+            Datahub.addLiabilities(msg.sender, token, amount + initalMarginFeeAmount);
+            Datahub.setAssetInfo(1, token, amount + initalMarginFeeAmount, true); // 1 -> TotalBorrowedAmount
+            Datahub.alterUsersInterestRateIndex(msg.sender, token);
+        }
+
+        Executor.divideFee(token, initalMarginFeeAmount);
+        
+        Datahub.addAssets(msg.sender, token, amount);
+
+        uint256 usersAIMR = Datahub.calculateAIMRForUser(msg.sender);
+        uint256 usersTCV = Datahub.calculateCollateralValue(msg.sender);
+        // console.log("users aimr", usersAIMR);
+        // console.log("users tcv", usersTCV);
+        require(usersAIMR < usersTCV, "Cannot Borrow because it reached out the limit");
+    }
+
+    function repay(address token, uint256 amount) external {
+        IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(token);        
+        require(assetLogs.initialized == true, "this asset is not available to be repayed");
+       
+        interestContract.chargeMassinterest(token);
+
+        (uint256 assets, uint256 liabilities, , , ,) = Datahub.ReadUserData(msg.sender, token);
+
+        require(liabilities > 0, "Already repaid");
+        
+        uint256 repay_amount = amount > liabilities ? liabilities : amount;
+
+        require(repay_amount < assets, "Insufficient funds in user");
+
+        Executor.chargeinterest(msg.sender, token, repay_amount, true);       
+        Datahub.removeAssets(msg.sender, token, repay_amount);
+    }
+
     function withdrawETH(address payable owner) external onlyOwner {
         uint contractBalance = address(this).balance;
+        uint256 usersTCV = Datahub.calculateCollateralValue(msg.sender) - Datahub.calculatePendingCollateralValue(msg.sender);
         require(contractBalance > 0, "No balance to withdraw");
         payable(owner).transfer(contractBalance);
     }

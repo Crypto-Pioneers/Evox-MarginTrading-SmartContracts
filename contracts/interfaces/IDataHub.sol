@@ -67,20 +67,6 @@ interface IDataHub {
         uint256 amount
     ) external;
 
-    function alterMMR(
-        address user,
-        address in_token,
-        address out_token,
-        uint256 amount
-    ) external;
-
-    function alterIMR(
-        address user,
-        address in_token,
-        address out_token,
-        uint256 amount
-    ) external;
-
     function addLiabilities(
         address user,
         address token,
@@ -107,31 +93,7 @@ interface IDataHub {
         uint256 amount
     ) external;
 
-    function addInitialMarginRequirement(
-        address user,
-        address in_token,
-        address out_token,
-        uint256 amount
-    ) external;
-
-    function removeInitialMarginRequirement(
-        address user,
-        address in_token,
-        address out_token,
-        uint256 amount
-    ) external;
-
-    function returnPairMMROfUser(
-        address user,
-        address in_token,
-        address out_token
-    ) external view returns (uint256);
-
-    function returnPairIMROfUser(
-        address user,
-        address in_token,
-        address out_token
-    ) external view returns (uint256);
+    function divideFee(address token, uint256 amount) external;
 
     function addPendingBalances(
         address user,
@@ -191,13 +153,6 @@ interface IDataHub {
         uint256 amount
     ) external view returns (uint256);
 
-    function calculateMarginRequirement(
-        address user,
-        address token,
-        uint256 BalanceToLeave,
-        uint256 userAssets
-    ) external view returns (bool);
-
     function calculateAMMRForUser(address user) external view returns (uint256);
 
     function calculateTotalPortfolioValue(
@@ -224,4 +179,6 @@ interface IDataHub {
     ) external ;
 
     function tokenTransferFees(address token)external returns(uint256);
+
+    function changeTotalBorrowedAmountOfAsset(address token, uint256 _updated_value) external;
 }

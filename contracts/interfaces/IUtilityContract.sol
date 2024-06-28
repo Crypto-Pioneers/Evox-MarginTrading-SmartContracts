@@ -8,19 +8,6 @@ interface IUtilityContract {
         address token
     ) external view returns (bool);
 
-    function calculateMarginRequirement(
-        address user,
-        address token,
-        uint256 BalanceToLeave,
-        uint256 userAssets
-    ) external view returns (bool);
-
-    function calculateAIMRRequirement(
-        address user,
-        address token,
-        uint256 BalanceToLeave
-    ) external view returns (bool);
-
     function calculateTradeLiabilityAddtions(
         address[2] memory pair,
         address[][2] memory participants,
@@ -93,19 +80,7 @@ interface IUtilityContract {
         uint256[][2] memory trade_amounts
     ) external view returns (bool);
 
-    function Modifymmr(
-        address user,
-        address in_token,
-        address out_token,
-        uint256 amount
-    ) external;
-
-    function Modifyimr(
-        address user,
-        address in_token,
-        address out_token,
-        uint256 amount
-    ) external;
-
     function debitAssetInterest(address user, address token) external;
+
+    function returnEarningProfit(address user, address token) external view returns(uint256);
 }

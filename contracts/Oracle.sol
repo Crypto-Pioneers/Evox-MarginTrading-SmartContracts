@@ -176,11 +176,6 @@ contract Oracle is Ownable{
         alterPending(participants[0], trade_amounts[0], trade_side[0], pair[0]);
         alterPending(participants[1], trade_amounts[1], trade_side[1], pair[1]);
     }
-
-    /// @notice Processes a trade details
-    /// @param  participants the participants on the trade
-    /// @param  tradeAmounts the trade amounts in the trade
-    /// @param  pair the token involved in the trade
     function alterPending(
         address[] memory participants,
         uint256[] memory tradeAmounts,
@@ -259,18 +254,16 @@ contract Oracle is Ownable{
             // The reason why we update price AFTER we make the call to the executor is because if it fails, the prices wont update
             // and the update prices wll not be included in the  TX
             if (pair[0] == DepositVault._USDT()) {
-                uint256 decimals = DepositVault.fetchDecimals(pair[1]);
                 Datahub.toggleAssetPrice(
                     pair[1],
-                    ((OrderDetails[requestId].taker_amounts[OrderDetails[requestId].taker_amounts.length - 1] * (10 ** decimals)) / OrderDetails[requestId].maker_amounts[OrderDetails[requestId].maker_amounts.length - 1])
+                    ((OrderDetails[requestId].taker_amounts[OrderDetails[requestId].taker_amounts.length - 1] * (10 ** 18)) / OrderDetails[requestId].maker_amounts[OrderDetails[requestId].maker_amounts.length - 1])
                 );
             } else {
-                uint256 decimals = DepositVault.fetchDecimals(pair[0]);
                 Datahub.toggleAssetPrice(
                     pair[0],
                     ((OrderDetails[requestId].maker_amounts[
                         OrderDetails[requestId].maker_amounts.length - 1
-                    ] * (10 ** decimals)) /
+                    ] * (10 ** 18)) /
                         OrderDetails[requestId].taker_amounts[
                             OrderDetails[requestId].taker_amounts.length - 1
                         ])
@@ -279,62 +272,33 @@ contract Oracle is Ownable{
         }
     }
 
-     function revertTrade(
+    function revertTrade(
         address[2] memory pair,
         address[] memory takers,
         address[] memory makers,
         uint256[] memory taker_amounts,
         uint256[] memory maker_amounts
     ) private {
-        if (
-            requestIdtoIdStruct[requestId].incomingFulfillments &&
-                requestIdtoIdStruct[requestId].lastExecuted + 1 hours > block.timestamp
-        ) {
-            delete requestIdtoIdStruct[requestId].incomingFulfillments;
+        uint256 balanceToAdd;
+        uint256 MakerbalanceToAdd;
+        for (uint256 i = 0; i < takers.length; i++) {
+            (, , uint256 pending, , ,) = Datahub.ReadUserData(takers[i], pair[0]);
+            // if its a margin trade , its makes perfect sense 
+            balanceToAdd = taker_amounts[i] > pending ? pending : taker_amounts[i];
 
-            address[2] memory pair;
-            pair[0] = OrderDetails[requestId].taker_token;
-            pair[1] = OrderDetails[requestId].maker_token;
-            address[] memory takers = OrderDetails[requestId].takers;
-            address[] memory makers = OrderDetails[requestId].makers;
-            uint256[] memory taker_amounts = OrderDetails[requestId].taker_amounts;
-            uint256[] memory maker_amounts = OrderDetails[requestId].maker_amounts;
+            Datahub.addAssets(takers[i], pair[0], balanceToAdd);
 
-            if (msg.sender == takers[0]) {
-                for (uint256 i = 0; i < takers.length; i++) {
-                    (, , uint256 pending, , ,) = Datahub.ReadUserData(takers[i], pair[0]);
-                    uint256 balanceToAdd = taker_amounts[i] > pending
-                        ? pending
-                        : taker_amounts[i];
+            Datahub.removePendingBalances(takers[i], pair[0], balanceToAdd);
+        }
 
-                    Datahub.addAssets(takers[i], pair[0], balanceToAdd);
-                    Datahub.removePendingBalances(takers[i], pair[0], balanceToAdd);
-                }
-            } else if (msg.sender == makers[0]) {
-                for (uint256 i = 0; i < makers.length; i++) {
-                    (, , uint256 pending, , ,) = Datahub.ReadUserData(makers[i], pair[1]);
-                    uint256 MakerbalanceToAdd = maker_amounts[i] > pending
-                        ? pending
-                        : maker_amounts[i];
+        for (uint256 i = 0; i < makers.length; i++) {
+           (, , uint256 pending, , ,) = Datahub.ReadUserData(makers[i], pair[0]);
 
-                    Datahub.addAssets(makers[i], pair[1], MakerbalanceToAdd);
-                    Datahub.removePendingBalances(
-                        makers[i],
-                        pair[1],
-                        MakerbalanceToAdd
-                    );
-                }
-            }
+            MakerbalanceToAdd = maker_amounts[i] > pending ? pending : maker_amounts[i];
 
-            emit TradeReverted(
-                requestId,
-                pair[0],
-                pair[1],
-                OrderDetails[requestId].takers,
-                OrderDetails[requestId].makers,
-                OrderDetails[requestId].taker_amounts,
-                OrderDetails[requestId].maker_amounts
-            );
+            Datahub.addAssets(makers[i], pair[1], MakerbalanceToAdd);
+
+            Datahub.removePendingBalances(makers[i], pair[0], MakerbalanceToAdd );
         }
     }
 
