@@ -273,15 +273,14 @@ contract DepositVault is Ownable {
         require(Datahub.returnAssetLogs(token).initialized == true, "this asset is not available to be deposited or traded");
         
         interestContract.chargeMassinterest(token);
-        
+               
+        utility.debitAssetInterest(user, token);
+
         (uint256 assets, uint256 liabilities, uint256 pending, , ,) = Datahub.ReadUserData(user, token);
-        
-        uint256 earningRate = utility.returnEarningProfit(user, token);
-        Datahub.addAssets(user, token, earningRate);
         // Datahub.setAssetInfo(0, token, earningRate, true);
         
         require(pending == 0, "You must have a 0 pending trade balance to withdraw, please wait for your trade to settle before attempting to withdraw");
-        require(amount <= assets + earningRate, "You cannot withdraw more than your asset balance");
+        require(amount <= assets, "You cannot withdraw more than your asset balance");
 
         Datahub.removeAssets(user, token, amount);
         Datahub.setAssetInfo(0, token, amount, false); // 0 -> totalSupply

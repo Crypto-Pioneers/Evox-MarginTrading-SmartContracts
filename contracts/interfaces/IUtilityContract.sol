@@ -77,4 +77,6 @@ interface IUtilityContract {
     function debitAssetInterest(address user, address token) external;
 
     function returnEarningProfit(address user, address token) external view returns(uint256);
+
+    function maxBorrowCheck(address[2] memory pair, address[][2] memory participants, uint256[][2] memory trade_amounts) external view returns (bool);
 }

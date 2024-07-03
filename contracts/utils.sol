@@ -212,7 +212,7 @@ contract Utility is Ownable {
         return true;
     }
 
-     /// @notice this function runs the margin checks, changes margin status if applicable and adds pending balances
+    /// @notice this function runs the margin checks, changes margin status if applicable and adds pending balances
     /// @param pair the pair of tokens being traded
     /// @param participants of the trade 2 nested arrays
     /// @param trade_amounts the trades amounts for each participant
@@ -260,6 +260,12 @@ contract Utility is Ownable {
                 uint256 collateralValue = Datahub.calculateCollateralValue(participants[i]) - Datahub.calculatePendingCollateralValue(participants[i]);
 
                 uint256 aimrForUser = Datahub.calculateAIMRForUser(participants[i]);
+
+                console.log("collateral value", collateralValue / 10 ** 18);
+                console.log("aimrForUser", aimrForUser / 10 ** 18);
+                console.log("initalMarginFeeAmount", initalMarginFeeAmount / 10 ** 18);
+                console.log("collateral value - sum", collateralValue / 10 ** 18, aimrForUser + initalMarginFeeAmount / 10 ** 18);
+
                 if (collateralValue <= aimrForUser + initalMarginFeeAmount) {
                     return false;
                 }
@@ -297,6 +303,30 @@ contract Utility is Ownable {
                 usersEarningRateIndex
             );
         return interestCharge;
+    }
+
+    /// @notice Checks that the trade will not push the asset over maxBorrowProportion
+    function maxBorrowCheck(
+        address[2] memory pair,
+        address[][2] memory participants,
+        uint256[][2] memory trade_amounts
+    ) public view returns (bool) {
+        uint256 newLiabilitiesIssued;
+        for (uint256 i = 0; i < pair.length; i++) {
+            uint256 collateral = EVO_LIBRARY.calculateTotal(trade_amounts[i]);
+            uint256 bulkAssets = returnBulkAssets(participants[i], pair[i]);
+            newLiabilitiesIssued = collateral > bulkAssets ? collateral - bulkAssets: 0;
+
+            if (newLiabilitiesIssued > 0) {
+                IDataHub.AssetData memory assetLogs = Datahub.returnAssetLogs(pair[i]);
+                bool flag = EVO_LIBRARY.calculateBorrowProportionAfterTrades(
+                    assetLogs,
+                    newLiabilitiesIssued
+                );
+                return flag;
+            }
+        }
+        return true;
     }
 
     function debitAssetInterest(address user, address token) public checkRoleAuthority {

@@ -91,4 +91,8 @@ contract MockDatahub is DataHub {
   function setTradeFee(address token, uint256 feeType, uint256 amount) public {
     assetdata[token].tradeFees[feeType] = amount;
   }
+
+  function setCollateralMultiplier(address token, uint256 _updated_value) public {
+    assetdata[token].collateralMultiplier = _updated_value; //  totalBorrowedAmount
+  }
 }

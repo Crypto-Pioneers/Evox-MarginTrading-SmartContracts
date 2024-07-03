@@ -914,8 +914,8 @@ describe("Interest Test", function () {
         it("Deposit SIGNER0 100 USDT FAILURE", async function () {
             const { signers, Utils, CurrentExchange, deposit_vault, CurrentLiquidator, DataHub, Oracle, _Interest, USDT_TOKEN, REXE_TOKEN } = await loadFixture(deployandInitContracts);
 
-            CurrentExchange.setOrderBookProviderTest(signers[2]);
-            CurrentExchange.setDaoWalletTest(signers[2]);
+            await CurrentExchange.setOrderBookProviderTest(signers[2]);
+            await CurrentExchange.setDaoWalletTest(signers[2]);
 
             /////////////////////////////// DEPOSIT TOKENS //////////////////////////////////
             let deposit_amount = 500_000000000000000000n
@@ -1062,8 +1062,8 @@ describe("Interest Test", function () {
         it("Deposit SIGNER0 100 USDT SUCCESS", async function () {
             const { signers, Utils, CurrentExchange, deposit_vault, CurrentLiquidator, DataHub, Oracle, _Interest, USDT_TOKEN, REXE_TOKEN } = await loadFixture(deployandInitContracts);
 
-            CurrentExchange.setOrderBookProviderTest(signers[2]);
-            CurrentExchange.setDaoWalletTest(signers[2]);
+            await CurrentExchange.setOrderBookProviderTest(signers[2]);
+            await CurrentExchange.setDaoWalletTest(signers[2]);
 
             /////////////////////////////// DEPOSIT TOKENS //////////////////////////////////
             let deposit_amount = 500_000000000000000000n
@@ -1279,8 +1279,8 @@ describe("Interest Test", function () {
         it("Withdraw SIGNER1 200 From LendingPool FAILIURE", async function () {
             const { signers, Utils, CurrentExchange, deposit_vault, CurrentLiquidator, DataHub, Oracle, _Interest, USDT_TOKEN, REXE_TOKEN } = await loadFixture(deployandInitContracts);
 
-            CurrentExchange.setOrderBookProviderTest(signers[2]);
-            CurrentExchange.setDaoWalletTest(signers[2]);
+            await CurrentExchange.setOrderBookProviderTest(signers[2]);
+            await CurrentExchange.setDaoWalletTest(signers[2]);
 
             /////////////////////////////// DEPOSIT TOKENS //////////////////////////////////
             let deposit_amount = 500_000000000000000000n
@@ -1436,8 +1436,8 @@ describe("Interest Test", function () {
         it("Withdraw SIGNER1 100 From LendingPool SUCCESS", async function () {
             const { signers, Utils, CurrentExchange, deposit_vault, CurrentLiquidator, DataHub, Oracle, _Interest, USDT_TOKEN, REXE_TOKEN } = await loadFixture(deployandInitContracts);
 
-            CurrentExchange.setOrderBookProviderTest(signers[2]);
-            CurrentExchange.setDaoWalletTest(signers[2]);
+            await CurrentExchange.setOrderBookProviderTest(signers[2]);
+            await CurrentExchange.setDaoWalletTest(signers[2]);
 
             /////////////////////////////// DEPOSIT TOKENS //////////////////////////////////
             let deposit_amount = 500_000000000000000000n
